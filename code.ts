@@ -162,16 +162,20 @@ async function importVariables(data: Record<string, CollectionData>) {
           
           if (!modeId) continue;
 
+          // Ensure modeId is a string
+          const modeIdStr = typeof modeId === 'symbol' ? String(modeId) : modeId;
+          if (!modeIdStr) continue;
+
           if (typeof value === 'object' && value !== null && 'type' in value && value.type === 'VARIABLE_ALIAS') {
             const referencedVar = variableMap.get(value.id);
             if (referencedVar) {
-              variable.setValueForMode(modeId, {
+              variable.setValueForMode(modeIdStr, {
                 type: 'VARIABLE_ALIAS',
                 id: referencedVar.id
               });
             }
           } else {
-            variable.setValueForMode(modeId, value);
+            variable.setValueForMode(modeIdStr, value);
           }
         } catch (error) {
           console.error(`Failed to set value for variable ${varData.name} in mode ${oldModeId}:`, error);
@@ -185,6 +189,66 @@ async function importVariables(data: Record<string, CollectionData>) {
 function isVariableAlias(value: VariableValue): value is VariableAlias {
   return typeof value === 'object' && value !== null && 'type' in value && value.type === 'VARIABLE_ALIAS';
 }
+
+// Extract style from current selection and send to UI
+function extractButtonStyleFromSelection() {
+  const selection = figma.currentPage.selection[0];
+  if (!selection) return;
+  // Only support FRAME, RECTANGLE, or COMPONENT for button-like styles
+  if (
+    selection.type === 'FRAME' ||
+    selection.type === 'RECTANGLE' ||
+    selection.type === 'COMPONENT'
+  ) {
+    // Extract fill color (only solid for now)
+    let background = undefined;
+    if (Array.isArray(selection.fills) && selection.fills.length > 0 && selection.fills[0].type === 'SOLID' && selection.fills[0].visible !== false) {
+      const fill = selection.fills[0] as SolidPaint;
+      const r = Math.round(fill.color.r * 255);
+      const g = Math.round(fill.color.g * 255);
+      const b = Math.round(fill.color.b * 255);
+      const a = fill.opacity !== undefined ? fill.opacity : 1;
+      background = `rgba(${r},${g},${b},${a})`;
+    }
+    // Extract border radius
+    const borderRadius = selection.cornerRadius !== undefined ? selection.cornerRadius : 0;
+    // Extract stroke (border)
+    let border = undefined;
+    if (Array.isArray(selection.strokes) && selection.strokes.length > 0 && selection.strokes[0].type === 'SOLID' && selection.strokes[0].visible !== false) {
+      const stroke = selection.strokes[0] as SolidPaint;
+      const r = Math.round(stroke.color.r * 255);
+      const g = Math.round(stroke.color.g * 255);
+      const b = Math.round(stroke.color.b * 255);
+      const a = stroke.opacity !== undefined ? stroke.opacity : 1;
+      border = `${String(selection.strokeWeight || 1)}px solid rgba(${r},${g},${b},${a})`;
+    }
+    // Extract font color (if text child exists)
+    let color = undefined;
+    if ('children' in selection) {
+      const textNode = selection.children.find((child) => child.type === 'TEXT');
+      if (textNode && Array.isArray(textNode.fills) && textNode.fills.length > 0 && textNode.fills[0].type === 'SOLID') {
+        const fill = textNode.fills[0] as SolidPaint;
+        const r = Math.round(fill.color.r * 255);
+        const g = Math.round(fill.color.g * 255);
+        const b = Math.round(fill.color.b * 255);
+        const a = fill.opacity !== undefined ? fill.opacity : 1;
+        color = `rgba(${r},${g},${b},${a})`;
+      }
+    }
+    // Send style to UI
+    figma.ui.postMessage({
+      type: 'selectionStyle',
+      style: {
+        background,
+        borderRadius,
+        border,
+        color,
+      },
+    });
+  }
+}
+
+extractButtonStyleFromSelection();
 
 figma.ui.onmessage = async (msg) => {
   if (msg.type === 'export') {
